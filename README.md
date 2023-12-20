@@ -2,9 +2,11 @@
 
 Forked from rvaiya/moused for personal config and added application mapper code from rvaiya/keyd repo.
 
-# Install
+# Run
 
 	sudo /bin/python /<path_to_application-mapper.py
+
+ This will start the moused app and update the mappings based on active window.
 
 # Config
 
