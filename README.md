@@ -1,22 +1,20 @@
 # What?
 
-Mouse configuration daemon. This is an initial code dump of a personal tool. YMMV.
-I will revisit and properly publish this later/maybe :P.
+Forked from rvaiya/moused for personal config and added application mapper code from rvaiya/keyd repo.
 
 # Install
 
-	make && sudo make install && sudo systemctl --now enable moused
+	sudo /bin/python /<path_to_application-mapper.py
 
 # Config
 
-All mice are configured in /etc/moused.conf. The file has the following format
+Global mappings are configured in /etc/moused/moused.conf. The file has the following format
 
 	[<mouse name>]
 	
 	
 	<LHS> = <Action>
 
-`sudo moused -m`
 ## Example	
 	[Logitech M570]
 
@@ -27,6 +25,19 @@ All mice are configured in /etc/moused.conf. The file has the following format
 	btn8 = sensitivity(.25)
 	scrolldown = scrollon
 	scrollup = scrolloff
+ 
+ Per-app configurations are in $HOME/.config/moused/app.conf. The file has the following format
+
+	[<window name>]
+	
+	
+	<LHS> = <Action>
+
+## Example	
+	[firefox]
+
+	scrolldown = btn1
+	scrollup = btn1
 
 # Options
 
