@@ -16,9 +16,12 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include "config.h"
+#include "moused.h"
+#include <poll.h>
+
 
 #define UINPUT_DEVICE_NAME "moused virtual device"
-#define CONFIG_PATH "/etc/moused.conf"
+#define ARRAY_SIZE(x) (int)(sizeof(x)/sizeof(x[0]))
 
 static int ufd = -1;
 static int scrollmode = 0;
@@ -32,7 +35,7 @@ static struct udev_monitor *udevmon;
 struct mouse {
 	int fd;
 	char devnode[256];
-
+	struct mouse_config original_cfg;
 	struct mouse_config *cfg;
 	int button_state[MAX_BUTTONS];
 
@@ -92,6 +95,67 @@ static int is_mouse(struct udev_device *dev)
 	}
 
 	return 0;
+}
+
+static int ipc_exec(int type, const char *data, size_t sz, uint32_t timeout)
+{
+	struct ipc_message msg;
+
+	assert(sz <= sizeof(msg.data));
+
+	msg.type = type;
+	msg.sz = sz;
+	msg.timeout = timeout;
+	memcpy(msg.data, data, sz);
+
+	int con = ipc_connect();
+
+	if (con < 0) {
+		perror("connect");
+		exit(-1);
+	}
+
+	xwrite(con, &msg, sizeof msg);
+	xread(con, &msg, sizeof msg);
+
+	if (msg.sz) {
+		xwrite(1, msg.data, msg.sz);
+		xwrite(1, "\n", 1);
+	}
+
+	return msg.type == IPC_FAIL;
+
+	return type == IPC_FAIL;
+}
+
+void xwrite(int fd, const void *buf, size_t sz)
+{
+	size_t nwr = 0;
+	ssize_t n;
+
+	while(sz != nwr) {
+		n = write(fd, buf+nwr, sz-nwr);
+		if (n < 0) {
+			perror("write");
+			exit(-1);
+		}
+		nwr += n;
+	}
+}
+
+void xread(int fd, void *buf, size_t sz)
+{
+	size_t nrd = 0;
+	ssize_t n;
+
+	while(sz != nrd) {
+		n = read(fd, buf+nrd, sz-nrd);
+		if (n < 0) {
+			perror("read");
+			exit(-1);
+		}
+		nrd += n;
+	}
 }
 
 static void get_mouse_nodes(char *nodes[MAX_MICE], int *sz) 
@@ -280,6 +344,7 @@ void perform_action(struct mouse *mouse, struct action *action, int ispressed)
 
 		if(ispressed == 2) { //If we are not processing a button event simulate a complete click.
 			send_button_event(btn, 1);
+			write_event(ufd, EV_SYN, SYN_REPORT, 0);
 			send_button_event(btn, 0);
 		} else {
 			send_button_event(btn, ispressed);
@@ -384,7 +449,7 @@ void process_event(struct mouse *mouse, struct input_event *ev)
 
 			break;
 		default:
-			warn("Unrecognized REL event: %d\n", ev->code);
+			//warn("Unrecognized REL event: %d\n", ev->code);
 			write(ufd, ev, sizeof(*ev));
 			break;
 		} 
@@ -438,6 +503,7 @@ int manage_mouse(const char *devnode)
 	mouse = malloc(sizeof(struct mouse));
 	mouse->fd = fd;
 	mouse->cfg = cfg;
+	mouse->original_cfg = *cfg;
 	mouse->sensitivity = mouse->cfg->sensitivity;
 	strcpy(mouse->devnode, devnode);
 
@@ -575,10 +641,114 @@ int monitor_loop()
 	return 0;
 }
 
+
+static void send_fail(int con, const char *fmt, ...)
+{
+	struct ipc_message msg = {0};
+	va_list args;
+
+	va_start(args, fmt);
+
+	msg.type = IPC_FAIL;
+	msg.sz = vsnprintf(msg.data, sizeof(msg.data), fmt, args);
+
+	xwrite(con, &msg, sizeof msg);
+	close(con);
+
+	va_end(args);
+}
+
+static void send_success(int con)
+{
+	struct ipc_message msg = {0};
+
+	msg.type = IPC_SUCCESS;;
+	msg.sz = 0;
+
+	xwrite(con, &msg, sizeof msg);
+	close(con);
+}
+
+
+int add_remove_bindings(struct mouse_config *mouse_config, const char *exp)
+{
+	if (!strcmp(exp, "reset")) {
+		//printf("\nresetting config\n");
+		*mice->cfg = mice->original_cfg;
+		return 0;
+	} else {
+		//printf("\nadding bindings\n");
+		return config_add_entry(mice->cfg, exp);
+	}
+}
+
+static void handle_client(int con)
+{
+	struct ipc_message msg;
+
+	xread(con, &msg, sizeof msg);
+
+	if (msg.sz >= sizeof(msg.data)) {
+		send_fail(con, "maximum message size exceeded");
+		return;
+	}
+	msg.data[msg.sz] = 0;
+
+	if (msg.timeout > 1000000) {
+		send_fail(con, "timeout cannot exceed 1000 ms");
+		return;
+	}
+
+	switch (msg.type) {
+		struct mouse_config *ent;
+		int success;
+
+	case IPC_BIND:
+		success = 0;
+
+		if (msg.sz == sizeof(msg.data)) {
+			send_fail(con, "bind expression size exceeded");
+			return;
+		}
+
+		msg.data[msg.sz] = 0;
+
+		for (ent = configs; ent; ent = ent->next) {
+			//printf("\n%s\n", msg.data);
+			if(!(add_remove_bindings(ent, msg.data)))
+				success = 1;
+		}
+
+		if (success)
+			send_success(con);
+		else
+			send_fail(con, "failed");
+
+		break;
+	default:
+		send_fail(con, "Unknown command");
+		break;
+	}
+}
+
+static long get_time_ms()
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ts.tv_sec * 1E3 + ts.tv_nsec / 1E6;
+}
+
+static int ipcfd = -1;
+
 void main_loop() 
 {
+	ipcfd = ipc_create_server(SOCKET_PATH);
+	if (ipcfd < 0)
+		die("failed to create %s (another instance already running?)", SOCKET_PATH);
+
 	struct mouse *mouse;
 	int monfd;
+	int timeout = 0;
 
 	int i, sz;
 	char *devs[MAX_MICE];
@@ -601,8 +771,12 @@ void main_loop()
 
 	monfd = udev_monitor_get_fd(udevmon);
 
-	int exit = 0;
-	while(!exit) {
+	struct pollfd pfds[100];
+
+	pfds[0].fd = ipcfd;
+	pfds[0].events = POLLIN | POLLERR;
+
+	while(1) {
 		int maxfd;
 		fd_set fds;
 		struct udev_device *dev;
@@ -636,23 +810,56 @@ void main_loop()
 				udev_device_unref(dev);
 			}
 
-
+			int j = 1;
 			for(mouse = mice;mouse;mouse=mouse->next) {
 				int fd = mouse->fd;
+				pfds[j].fd = mouse->fd;
+				pfds[j].events = POLLIN | POLLERR;
+				j++;
+			}
 
-				if(FD_ISSET(fd, &fds)) {
-					struct input_event ev;
+			int start_time;
+			int end_time;
+			int elapsed;
+			start_time = get_time_ms();
+			poll(pfds, j+1, timeout > 0 ? timeout : -1);
+			end_time = get_time_ms();
+			elapsed = end_time - start_time;
 
-					//printf("Event on %s\n", mice[i]->name);
-					while(read(fd, &ev, sizeof(ev)) > 0) {
-						process_event(mouse, &ev);
+			timeout-=elapsed;
+			
+			int k = 1;
+			for(mouse = mice;mouse;mouse=mouse->next) {
+				if (pfds[k].revents)
+				{
+					int fd = mouse->fd;
+					if (FD_ISSET(fd, &fds))
+					{
+						struct input_event ev;
+
+						if (read(fd, &ev, sizeof(ev)) > 0)
+						{
+							process_event(mouse, &ev);
+						}
 					}
 				}
+				k++;
+			}
+
+			if (pfds[0].revents)
+			{
+				int con = accept(ipcfd, NULL, 0);
+				if (con < 0)
+				{
+					perror("accept");
+					exit(-1);
+				}
+
+				handle_client(con);
 			}
 		}
 	}
 }
-
 
 void cleanup()
 {
@@ -697,10 +904,47 @@ void exit_signal_handler(int sig)
 	exit(0);
 }
 
+static int add_bindings(int argc, char *argv[])
+{
+	int i;
+	int ret = 0;
+	for (i = 1; i < argc; i++) {
+		if (ipc_exec(IPC_BIND, argv[i], strlen(argv[i]), 0))
+			ret = -1;	
+	}
+
+	if (!ret)
+		printf("Success\n");
+
+	return ret;
+}
+
+struct {
+	const char *name;
+	const char *flag;
+	const char *long_flag;
+
+	int (*fn)(int argc, char **argv);
+} commands[] = {
+	{"monitor"	, "-m", "--monitor"		, monitor_loop},
+	{"bind"		, "-e", "--expression"	, add_bindings},
+};
+
 int main(int argc, char *argv[])
 {
-	if(argc > 1 && !strcmp(argv[1], "-m"))
-		return monitor_loop();
+	size_t i;
+
+	if (argc > 1) {
+		for (i = 0; i < ARRAY_SIZE(commands); i++)
+			if (!strcmp(commands[i].name, argv[1]) ||
+				!strcmp(commands[i].flag, argv[1]) ||
+				!strcmp(commands[i].long_flag, argv[1])) {
+				return commands[i].fn(argc - 1, argv + 1);
+			}
+	}
+
+	// if(argc > 1 && !strcmp(argv[1], "-m"))
+	// 	return monitor_loop();
 
 	lock();
 

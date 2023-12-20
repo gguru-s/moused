@@ -88,6 +88,11 @@ void parse_action(const char *val, struct action *action)
 		err("%s is not a valid action.", val);
 }
 
+void update_config(const char *data)
+{
+	printf("%s", data);
+}
+
 void parse_config_file(const char *path)
 {
 	FILE *fh = fopen(path, "r");
@@ -185,4 +190,77 @@ next:
 
 	free(line);
 	fclose(fh);
+}
+
+
+int config_add_entry(struct mouse_config *mcfg, const char *line)
+{
+	char *name, *val;
+	static char line1[512];
+	strcpy(line1, line);
+
+	if (parse_kvp(line1, &name, &val) == 0)
+	{
+		if (!strncmp(name, "btn", 3))
+		{
+			int n = atoi(name + 3);
+			if (n > MAX_BUTTONS || n <= 0)
+			{
+				err("Button out of range (must be between %d and %d)", 1, MAX_BUTTONS);
+				return 1;
+			}
+
+			parse_action(val, &mcfg->buttons[n - 1]);
+		}
+		else if (!strcmp(name, "scrolldown"))
+		{
+			parse_action(val, &mcfg->scroll_down);
+		}
+		else if (!strcmp(name, "scrollup"))
+		{
+			parse_action(val, &mcfg->scroll_up);
+		}
+		else if (!strcmp(name, "scrollleft"))
+		{
+			parse_action(val, &mcfg->scroll_left);
+		}
+		else if (!strcmp(name, "scrollright"))
+		{
+			parse_action(val, &mcfg->scroll_right);
+		}
+		else if (strstr(name, "scroll_invert_axes"))
+		{
+			mcfg->scroll_invert_axes = atoi(val);
+		}
+		else if (strstr(name, "scroll_swap_axes"))
+		{
+			mcfg->scroll_swap_axes = atoi(val);
+		}
+		else if (strstr(name, "scroll_inhibit_x"))
+		{
+			mcfg->scroll_inhibit_x = atoi(val);
+		}
+		else if (strstr(name, "scroll_inhibit_y"))
+		{
+			mcfg->scroll_inhibit_y = atoi(val);
+		}
+		else if (strstr(name, "scroll_sensitivity"))
+		{
+			mcfg->scroll_sensitivity = atof(val);
+		}
+		else if (strstr(name, "scrollmode_sensitivity"))
+		{
+			mcfg->scrollmode_sensitivity = atof(val) * DEFAULT_SCROLLMODE_SENSITIVITY;
+		}
+		else if (strstr(name, "sensitivity"))
+		{
+			mcfg->sensitivity = atof(val);
+		}
+		else
+		{
+			err("%s is not a valid key", name);
+		}
+	}
+
+	return 1;
 }

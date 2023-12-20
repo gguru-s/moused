@@ -8,8 +8,9 @@
 #define MAX_BUTTONS 32
 #define DEFAULT_SCROLLMODE_SENSITIVITY .1
 
-#define CONFIG_PATH "/etc/moused.conf"
+#define CONFIG_PATH "/etc/moused/moused.conf"
 #define LOCK_FILE "/var/lock/moused.lock"
+#define SOCKET_PATH "/var/run/moused.socket"
 
 enum action_type {
 	ACTION_DEFAULT = 0,
@@ -48,5 +49,6 @@ struct mouse_config {
 
 extern struct mouse_config *configs;
 void parse_config_file(const char *path);
+int config_add_entry(struct mouse_config *mcfg, const char *line);
 
 #endif
