@@ -6,10 +6,11 @@ Forked from rvaiya/moused for personal config and added application mapper code 
 
 Add the user to moused group
 
-	make install 
-Run
-
-	/<path_to_application-mapper.py
+	make
+ 	make install
+ 	sudo systemctl enable moused
+  	sudo systemctl start moused
+	/application-mapper.py
 
  This will start the moused app and update the mappings based on active window.
 
