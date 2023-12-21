@@ -4,10 +4,12 @@ Forked from rvaiya/moused for personal config and added application mapper code 
 
 # Install & Run
 
+Add the user to moused group
+
 	make install 
- 	add the user to moused group
-  Run
- 	/<path_to_application-mapper.py
+Run
+
+	/<path_to_application-mapper.py
 
  This will start the moused app and update the mappings based on active window.
 
