@@ -13,10 +13,11 @@ from fnmatch import fnmatch
 
 CONFIG_PATH = '/home/guru/.config/moused/app.conf'
 LOCKFILE = '/home/guru/.config/moused/app.lock'
+LOGFILE = '/home/guru/.config/moused/app.log'
 
 debug_flag = os.getenv('KEYD_DEBUG')
 
-subprocess.Popen(['/home/guru/Gits/moused/bin/moused'], stdout=subprocess.DEVNULL)
+# subprocess.Popen(['/home/guru/Gits/moused/bin/moused'], stdout=subprocess.DEVNULL)
 
 def dbg(s):
     if debug_flag:
@@ -207,8 +208,22 @@ def lock():
     except:
         die('only one instance may run at a time')
 
+def daemonize():
+    print(f'Daemonizing, log output will be stored in {LOGFILE}...')
+
+    fh = open(LOGFILE, 'w')
+
+    os.close(1)
+    os.close(2)
+    os.dup2(fh.fileno(), 1)
+    os.dup2(fh.fileno(), 2)
+
+    if os.fork(): exit(0)
+    if os.fork(): exit(0)
+
 opt = argparse.ArgumentParser()
 opt.add_argument('-v', '--verbose', default=False, action='store_true', help='Log the active window (useful for discovering window and class names)')
+opt.add_argument('-d', '--daemonize', default=False, action='store_true', help='fork and run in the background')
 args = opt.parse_args()
 
 if not os.path.exists(CONFIG_PATH):
@@ -257,5 +272,8 @@ def on_window_change(cls, title):
 
 mon = get_monitor(on_window_change)
 mon.init()
+
+if args.daemonize:
+    daemonize()
 
 mon.run()
